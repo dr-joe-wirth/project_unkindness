@@ -1,7 +1,7 @@
 # Joseph S. Wirth
 # September 2023
 
-from auxillary.Parameters import Parameters
+from bin.Parameters import Parameters
 from Bio.SeqRecord import SeqRecord
 import gzip, os, subprocess
 from Bio.Seq import Seq

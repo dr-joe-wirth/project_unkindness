@@ -1,8 +1,8 @@
 # Joseph S. Wirth
 # September 2023
 
-from auxillary.Parameters import Parameters
-from auxillary.BlastHit import BlastHit
+from bin.Parameters import Parameters
+from bin.BlastHit import BlastHit
 import os, subprocess
 
 

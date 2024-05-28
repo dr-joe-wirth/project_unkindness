@@ -3,15 +3,15 @@
 import getopt, glob, multiprocessing, os, shutil, subprocess, sys
 from miscDirectory import MISC_DIR
 sys.path.append(MISC_DIR)
-from auxillary.blastn import _blastn
-from auxillary.Parameters import Parameters
+from bin.blastn import _blastn
+from bin.Parameters import Parameters
 from downloadSRA import _runner as _downloadSrrs
-from auxillary.ariba import _ariba, _buildAribaDb
+from bin.ariba import _ariba, _buildAribaDb
 from downloadAssemblies import _runner as _downloadAssemblies
 
 
 __author__ = "Joseph S. Wirth"
-__version__ = "2.0.4"
+__version__ = "0.0.1"
 
 
 def _parseFile(fn:str) -> dict[str,tuple[str,str]]:
@@ -547,7 +547,3 @@ def _main():
     # only run the program if help was not requested
     if not helpRequest:
         _runner(infn, email, seqdir, outfn, cpus, delete)
-
-
-if __name__ == "__main__":
-    _main()
