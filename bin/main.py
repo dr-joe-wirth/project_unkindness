@@ -397,10 +397,10 @@ def _parseArgs() -> tuple[str,str,str,str,str,float,float,bool,int,bool,bool]:
         SEP = ", "
         WIDTH = 21
         DEFAULT = " (default: "
-        HELP_MSG = f"{EOL}Determines the espW allele in an E. coli genome{EOL}" + \
+        HELP_MSG = f"{EOL}PROJECT UNKINDNESS{EOL}" + \
                    f"{GAP}{__author__}, 2024{EOL*2}" + \
                    f"usage:{EOL}" + \
-                   f"{GAP}{os.path.basename(__file__)} [-{SHORT_OPTS.replace(':', '')}]{EOL*2}" + \
+                   f"{GAP}unkindness.py [-{SHORT_OPTS.replace(':', '')}]{EOL*2}" + \
                    f"required arguments:{EOL}" + \
                    f"{GAP}{IN_FLAGS[0] + SEP + IN_FLAGS[1]:<{WIDTH}}[file] filename of a tab-separated file with three columns and no headers: key, ncbi accession, srr id{EOL}" + \
                    f"{GAP}{REF_FLAGS[0] + SEP + REF_FLAGS[1]:<{WIDTH}}[file] filename of a reference file in fasta format{EOL}" + \
