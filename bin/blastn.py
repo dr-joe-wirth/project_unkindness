@@ -1,24 +1,16 @@
-# Joseph S. Wirth
-# September 2023
-
 from bin.Parameters import Parameters
 from bin.BlastHit import BlastHit
 import os, subprocess
 
 
-def _blastn(params:Parameters) -> str:
+def _blastn(params:Parameters):
     """runs BLASTn to detect espW alleles using the values specified in a Parameters object
 
     Args:
         params (Parameters): a Parameters object
-
-    Returns:
-        str: the espW allele detected
     """
     __makeBlastDb(params)
     __runBlast(params)
-    allele = __parseBlastTable(params._blastFn)
-    return allele
 
 
 def __makeBlastDb(params:Parameters) -> None:
@@ -50,10 +42,10 @@ def __runBlast(params:Parameters) -> None:
         params (Parameters): a Parameters object
     """
     # constants
-    FN_SUFFIX = "_vs_espW.blastn"
+    FN_SUFFIX = f"_vs_{os.path.basename(os.path.splitext(params._referenceFna)[0])}.blastn"
     BLASTN = "blastn"
-    CMD = ("-ungapped", "-perc_identity", "90", "-qcov_hsp_perc", "35", "-max_target_seqs",
-           "10000", "-outfmt", '6 qseqid sseqid length qstart qend sstart send qcovhsp pident')
+    CMD = ("-max_target_seqs", "10000",
+           "-outfmt", '6 qseqid sseqid length qstart qend sstart send qcovhsp pident')
     
     # determine the output file
     params._blastFn = os.path.join(params._blastResultsDir, os.path.splitext(os.path.basename(params.fna))[0] + FN_SUFFIX)
@@ -61,41 +53,19 @@ def __runBlast(params:Parameters) -> None:
     # build the blastn command
     cmd = [BLASTN]
     cmd.extend(CMD)
-    cmd.extend(["-query", params._espwFna])
+    cmd.extend(["-query", params._referenceFna])
     cmd.extend(['-db', params._blastDb])
+    cmd.extend(['-perc_identity', str(params._blastPid)])
+    cmd.extend(['-qcov_hsp_perc', str(params._blastQcov)])
     cmd.extend(['-num_threads', str(params.threads)])
     cmd.extend(['-out', params._blastFn])
+    
+    if params._blastUngapped:
+        cmd.append("-ungapped")
     
     # run blastn
     subprocess.run(cmd, check=True, capture_output=True)
 
 
 def __parseBlastTable(fn:str) -> tuple[str,str]:
-    """parses a blastn table and determines which espW allele is present
-
-    Args:
-        fn (str): a blastn table
-
-    Returns:
-        tuple[str,str]: the espW allele detected and the contig where it was found
-    """
-    # initialize a list of hits
-    allHitsL:list[BlastHit] = list()
-    
-    # parse each line and add it to the list of hits
-    with open(fn, 'r') as fh:
-        for line in fh:
-            allHitsL.append(BlastHit.parseLine(line))
-    
-    # no hits means espW is absent
-    if allHitsL == []:
-        allele = 'absent'
-        contig = None
-    
-    # otherwise, choose the best hit's allele
-    else:
-        bestHit = max(allHitsL)
-        allele = bestHit.query
-        contig = bestHit.subject
-    
-    return allele, contig
+    pass

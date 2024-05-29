@@ -3,6 +3,7 @@
 import getopt, glob, multiprocessing, os, shutil, subprocess, sys
 from miscDirectory import MISC_DIR
 sys.path.append(MISC_DIR)
+from Bio import SeqIO
 from bin.blastn import _blastn
 from bin.Parameters import Parameters
 from downloadSRA import _runner as _downloadSrrs
@@ -93,28 +94,28 @@ def _findMissingAccessions(accessions:list[str], seqdir:str) -> set[str]:
     return {x for x in accessions if x not in exists}
 
 
-def _runOneBlastn(key:str, params:Parameters) -> tuple[str,str]:
+def _runOneBlastn(key:str, params:Parameters) -> None:
     """runs a single blastn command
 
     Args:
         key (str): the genome key
         params (Parameters): a Parameters object
-
-    Returns:
-        tuple[str,str]: (key, allele)
     """
-    # run the blast then link the result to the key
-    allele,contig = _blastn(params)
-    return (key, allele)
+    # run the blast
+    _blastn(params)
 
 
-def _runAllBlasts(parsed:dict[str,tuple[str,str]], missing:set[str], seqdir:str, cpus:int) -> dict[str,str]:
+def _runAllBlasts(parsed:dict[str,tuple[str,str]], missing:set[str], seqdir:str, refFn:str, pid:float, qcov:float, ungap:bool, cpus:int) -> None:
     """runs all the blastn commands in parallel
 
     Args:
         parsed (dict[str,tuple[str,str]]): the dictionary produced by _parseFile
         missing (set[str]): the set produced by _findMissingAccessions
         seqdir (str): the directory where sequence files are saved
+        refFn (str): the filename for a reference fasta file
+        pid (float): the percent identity cutoff for blast
+        qcov (float): the qcov_hsp cutoff for blast
+        ungap (bool): should the `-ungapped` flag be used for blast
         cpus (int): the number of cpus for parallel processing
 
     Returns:
@@ -134,7 +135,7 @@ def _runAllBlasts(parsed:dict[str,tuple[str,str]], missing:set[str], seqdir:str,
         # add the associated fna file to the argument list if it isn't missing
         if accn not in missing:
             # get the Parameters object
-            params = Parameters(os.path.join(seqdir, accn + EXT), '', '', 1, True, False)
+            params = Parameters(os.path.join(seqdir, accn + EXT), '', '', refFn, pid, qcov, ungap, 1, True, False)
             
             # create the blast directory if it doesn't already exist
             if not os.path.isdir(params._blastResultsDir):
@@ -145,35 +146,29 @@ def _runAllBlasts(parsed:dict[str,tuple[str,str]], missing:set[str], seqdir:str,
     
     # run the blasts in parallel
     pool = multiprocessing.Pool(cpus)
-    results = pool.starmap(_runOneBlastn, args)
+    pool.starmap(_runOneBlastn, args)
     pool.close()
     pool.join()
-    
-    # convert the list of tuples to a dictionary before returning
-    return dict(results)
 
 
-def _runOneAriba(key:str, params:Parameters) -> tuple[str,str]:
+def _runOneAriba(key:str, params:Parameters) -> None:
     """runs a single ariba command
 
     Args:
         key (str): the genome key
         params (Parameters): a Parameters object
-
-    Returns:
-        tuple[str,str]: (genome key, allele)
     """
     # run one ariba then link the key to the allele
-    allele = _ariba(params)
-    return (key, allele)
+    _ariba(params)
 
 
-def _runAllAribas(srrs:dict[str,str], seqdir:str, cpus:int) -> dict[str,str]:
+def _runAllAribas(srrs:dict[str,str], seqdir:str, refFn:str, cpus:int) -> None:
     """runs all ariba commands in parallel
 
     Args:
         srrs (dict[str,str]): key=genome key; val=srr id
         seqdir (str): the directory containing sequence files
+        refFn (str): the filename of the reference fasta file
         cpus (int): the number of cpus for parallel processing
 
     Returns:
@@ -192,7 +187,7 @@ def _runAllAribas(srrs:dict[str,str], seqdir:str, cpus:int) -> dict[str,str]:
         # get the read file names and create a params object
         r1 = os.path.join(seqdir, srr + EXT_1)
         r2 = os.path.join(seqdir, srr + EXT_2)
-        params = Parameters(srr, r1, r2, 1, True, False)
+        params = Parameters(srr, r1, r2, refFn, 0, 0, True, 1, True, False)
         
         # build the ariba database only once
         if not built:
@@ -208,12 +203,9 @@ def _runAllAribas(srrs:dict[str,str], seqdir:str, cpus:int) -> dict[str,str]:
     
     # run ariba in parallel
     pool = multiprocessing.Pool(cpus)
-    results = pool.starmap(_runOneAriba, args)
+    pool.starmap(_runOneAriba, args)
     pool.close()
     pool.join()
-    
-    # convert the list of tuples to a dictionary before returning
-    return dict(results)
 
 
 def _writeResults(results:dict[str,str], fn:str) -> None:
@@ -258,13 +250,17 @@ def _cleanup(delete:bool, seqdir:str) -> None:
         shutil.rmtree(seqdir)
 
 
-def _runner(infn:str, email:str, seqdir:str, outfn:str, cpus:int, delete:bool) -> None:
+def _proto(infn:str, email:str, seqdir:str, refFn:str, pid:float, qcov:float, ungap:bool, outfn:str, cpus:int, delete:bool) -> None:
     """main runner function
 
     Args:
         infn (str): input filename
         email (str): email address
         seqdir (str): directory to save sequence files to
+        refFn (str): filename to a reference fasta file
+        pid (float): percent identity cutoff for blast
+        qcov (float): qcov_hsp cutoff for blast
+        ungap (bool): should the `-ungapped` flag be used in blast
         outfn (str): output filename
         cpus (int): number of cpus for parallel processing
         delete (bool): indicates if sequence files should be deleted
@@ -272,7 +268,6 @@ def _runner(infn:str, email:str, seqdir:str, outfn:str, cpus:int, delete:bool) -
     # constants
     FORMAT = "fasta"
     RENAME = True
-    ABSENT = "absent"
     
     # parse the file
     parsed = _parseFile(infn)
@@ -293,34 +288,24 @@ def _runner(infn:str, email:str, seqdir:str, outfn:str, cpus:int, delete:bool) -
     
     # run all the blasts
     print('running blastn ... ', end='', flush=True)
-    results = _runAllBlasts(parsed, missing, seqdir, cpus)
+    _runAllBlasts(parsed, missing, seqdir, refFn, pid, qcov, ungap, cpus)
     print('done')
     
-    # get a list of srrs that need to be downloaded for ariba
-    srrs = {x:parsed[x][1] for x,y in results.items() if y == ABSENT}
-    missingSrr = {x:parsed[x][1] for x in parsed.keys() if parsed[x][0] in missing}
-    srrs.update(missingSrr)
+    # get a list of all srrs
+    srrs = {x:y[1] for x,y in parsed.items()}
     
     # only process reads if required
     if len(srrs) > 0:
         # download srrs
-        _downloadSrrs(list(srrs.values()), seqdir, False, cpus, 1)
+        _downloadSrrs(srrs, seqdir, False, cpus, 1)
 
         # run ariba and update the results
         print('running ariba ... ', end='', flush=True)
-        results.update(_runAllAribas(srrs, seqdir, cpus))
+        _runAllAribas(srrs, seqdir, refFn, cpus)
         print('done')
-    
-    # write the results to file
-    _writeResults(results, outfn)
-    
-    # remove intermediate files
-    print('removing files ... ', end='', flush=True)
-    _cleanup(delete, seqdir)
-    print('done')
 
 
-def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
+def _parseArgs() -> tuple[str,str,str,str,str,float,float,bool,int,bool,bool]:
     """parses command line arguments
 
     Raises:
@@ -332,16 +317,26 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
         EnvironmentError: ariba not found
         EnvironmentError: sratoolkit not found
         FileNotFoundError: input file does not exist
+        FileNotFoundError: reference file does not exist
+        BaseException: reference file is not a fasta
         ValueError: output file not writeable
+        ValueError: invalid value for percent identity
+        ValueError: invalid value for percent identity
+        ValueError: invalid value for query coverage
+        ValueError: invalid value for query coverage
         ValueError: invalid value for num_threads
         BaseException: missing required arguments
 
     Returns:
-        tuple[str,str,str,str,int,bool]: input filename, email, output filename, sequence directory, number threads, delete seqs, help requested
+        tuple[str,str,str,str,str,float,float,bool,int,bool,bool]: input filename, reference filename, email, output filename, sequence directory, percent identity, query coverage, ungapped blast, number threads, delete seqs, help requested
     """
     # flags
     IN_FLAGS = ("-i", "--in")
     OUT_FLAGS = ("-o", "--out")
+    REF_FLAGS = ("-r", "--reference")
+    PID_FLAGS = ("-p", "--pid")
+    GAP_FLAGS = ("-u", "--ungapped")
+    QCOV_FLAGS = ("-q", "--qcov")
     HELP_FLAGS = ("-h", "--help")
     EMAIL_FLAGS = ("-e", "--email")
     CHECK_FLAGS = ("-c", "--check_env")
@@ -350,9 +345,13 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
     THREADS_FLAGS = ("-n", "--num_threads")
     VERSION_FLAGS = ("-v", "--version")
     SHORT_OPTS = IN_FLAGS[0][-1] + ":" + \
+                 REF_FLAGS[0][-1] + ":" + \
                  EMAIL_FLAGS[0][-1] + ":" + \
                  OUT_FLAGS[0][-1] + ":" + \
                  SEQDIR_FLAGS[0][-1] + ":" + \
+                 PID_FLAGS[0][-1] + ":" + \
+                 QCOV_FLAGS[0][-1] + ":" + \
+                 GAP_FLAGS[0][-1] + \
                  THREADS_FLAGS[0][-1] + ":" + \
                  DELETE_FLAGS[0][-1] + \
                  HELP_FLAGS[0][-1] + \
@@ -360,6 +359,10 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
                  CHECK_FLAGS[0][-1]
     LONG_OPTS = (IN_FLAGS[1][2:] + "=",
                  OUT_FLAGS[1][2:] + "=",
+                 REF_FLAGS[1][2:] + "=",
+                 PID_FLAGS[1][2:] + "=",
+                 GAP_FLAGS[1][2:],
+                 QCOV_FLAGS[1][2:] + "=",
                  HELP_FLAGS[1][2:],
                  EMAIL_FLAGS[1][2:] + "=",
                  CHECK_FLAGS[1][2:],
@@ -370,6 +373,9 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
     
     # default values
     DEF_OUT = os.path.join(os.curdir, "espw_alleles.tsv")
+    DEF_PID = 90
+    DEF_GAP = False
+    DEF_QCOV = 35
     DEF_THREADS = 1
     DEF_HELP = False
     DEF_SEQDIR = os.path.join(os.curdir, "seqs")
@@ -377,9 +383,13 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
     
     # messages
     ERR_MSG_1 = "input file does not exist"
-    ERR_MSG_2 = "cannot write output file"
-    ERR_MSG_3 = "invalid value for number of threads"
-    ERR_MSG_4 = "must provide all required arguments"
+    ERR_MSG_2 = "reference file does not exist"
+    ERR_MSG_3 = "reference file is not a fasta"
+    ERR_MSG_4 = "cannot write output file"
+    ERR_MSG_5 = "invalid value for percent identity"
+    ERR_MSG_6 = "invalid value for query coverage"
+    ERR_MSG_7 = "invalid value for number of threads"
+    ERR_MSG_8 = "must provide all required arguments"
     
     def printHelp():
         GAP = " "*4
@@ -393,10 +403,14 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
                    f"{GAP}{os.path.basename(__file__)} [-{SHORT_OPTS.replace(':', '')}]{EOL*2}" + \
                    f"required arguments:{EOL}" + \
                    f"{GAP}{IN_FLAGS[0] + SEP + IN_FLAGS[1]:<{WIDTH}}[file] filename of a tab-separated file with three columns and no headers: key, ncbi accession, srr id{EOL}" + \
+                   f"{GAP}{REF_FLAGS[0] + SEP + REF_FLAGS[1]:<{WIDTH}}[file] filename of a reference file in fasta format{EOL}" + \
                    f"{GAP}{EMAIL_FLAGS[0] + SEP + EMAIL_FLAGS[1]:<{WIDTH}}[str] email address (used to query NCBI){EOL*2}" + \
                    f"optional arguments:{EOL}" + \
                    f"{GAP}{OUT_FLAGS[0] + SEP + OUT_FLAGS[1]:<{WIDTH}}[file] filename to write the output{DEFAULT}'{DEF_OUT}'){EOL}" + \
                    f"{GAP}{SEQDIR_FLAGS[0] + SEP + SEQDIR_FLAGS[1]:<{WIDTH}}[directory] the directory where sequence files will be downloaded {DEFAULT}'{DEF_SEQDIR}'){EOL}" + \
+                   f"{GAP}{PID_FLAGS[0] + SEP + PID_FLAGS[1]:<{WIDTH}}[float] the percent identity cutoff for blast{DEFAULT}{DEF_PID}){EOL}" + \
+                   f"{GAP}{QCOV_FLAGS[0] + SEP + QCOV_FLAGS[1]:<{WIDTH}}[float] the query coverage cutoff for blast{DEFAULT}{DEF_QCOV}){EOL}" + \
+                   f"{GAP}{GAP_FLAGS[0] + SEP + GAP_FLAGS[1]:<{WIDTH}}perform blast with the `-ungapped` option{DEFAULT}{DEF_GAP}){EOL}" + \
                    f"{GAP}{THREADS_FLAGS[0] + SEP + THREADS_FLAGS[1]:<{WIDTH}}[int] the number of threads to use for parallel processing{DEFAULT}{DEF_THREADS}){EOL}" + \
                    f"{GAP}{DELETE_FLAGS[0] + SEP + DELETE_FLAGS[1]:<{WIDTH}}delete sequence files after finishing{DEFAULT}{DEF_DELETE}){EOL*2}" + \
                    f"troubleshooting:{EOL}" + \
@@ -469,11 +483,27 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
         # print success message
         print(SUCCESS)
     
+    def isFasta(fn:str) -> bool:
+        # constant
+        FORMAT = 'fasta'
+        
+        # check file
+        recsExist = False
+        for rec in SeqIO.parse(fn, FORMAT):
+            recsExist = True
+            break
+        
+        return recsExist
+    
     # set default values
     infn = None
+    refFn = None
     email = None
     outfn = DEF_OUT
     seqdir = DEF_SEQDIR
+    pid = DEF_PID
+    qcov = DEF_QCOV
+    ungap = DEF_GAP
     cpus = DEF_THREADS
     delete = DEF_DELETE
     helpRequest = DEF_HELP
@@ -503,6 +533,14 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
                     raise FileNotFoundError(ERR_MSG_1)
                 infn = arg
             
+            # get reference filename
+            elif opt in REF_FLAGS:
+                if not os.path.exists(arg):
+                    raise FileNotFoundError(ERR_MSG_2)
+                if not isFasta(arg):
+                    raise BaseException(ERR_MSG_3)
+                refFn = arg
+            
             # get email address
             elif opt in EMAIL_FLAGS:
                 email = arg
@@ -513,37 +551,60 @@ def _parseArgs() -> tuple[str,str,str,str,int,bool,bool]:
                     fh = open(arg, 'w')
                     fh.close()
                 except:
-                    raise ValueError(ERR_MSG_2)
+                    raise ValueError(ERR_MSG_4)
                 outfn = arg
             
             # get sequence directory
             elif opt in SEQDIR_FLAGS:
                 seqdir = arg
             
+            # get percent identity
+            elif opt in PID_FLAGS:
+                try:
+                    pid = float(arg)
+                except:
+                    raise ValueError(ERR_MSG_5)
+                
+                if pid not in range(0,100):
+                    raise ValueError(ERR_MSG_5)
+            
+            # get qcov_hsp_perc
+            elif opt in QCOV_FLAGS:
+                try:
+                    qcov = float(arg)
+                except:
+                    raise ValueError(ERR_MSG_6)
+                if qcov not in range(0,100):
+                    raise ValueError(ERR_MSG_6)
+            
+            # determine if ungapped blast
+            elif opt in GAP_FLAGS:
+                ungap = True
+            
             # get number of threads
             elif opt in THREADS_FLAGS:
                 try:
                     cpus = int(arg)
                 except ValueError:
-                    raise ValueError(ERR_MSG_3)
+                    raise ValueError(ERR_MSG_7)
             
             # determine if sequence files should be deleted
             elif opt in DELETE_FLAGS:
                 delete = True                
     
         # make sure all required arguments were specified
-        if None in (infn, email):
-            raise BaseException(ERR_MSG_4)
+        if None in (infn, email, refFn):
+            raise BaseException(ERR_MSG_8)
         
-    return infn, email, outfn, seqdir, cpus, delete, helpRequest
+    return infn, refFn, email, outfn, seqdir, pid, qcov, ungap, cpus, delete, helpRequest
 
 
 def _main():
     """entry point to the program
     """
     # parse command line arguments
-    infn, email, outfn, seqdir, cpus, delete, helpRequest = _parseArgs()
+    infn, refFn, email, outfn, seqdir, pid, qcov, ungap, cpus, delete, helpRequest = _parseArgs()
     
     # only run the program if help was not requested
     if not helpRequest:
-        _runner(infn, email, seqdir, outfn, cpus, delete)
+        _proto(infn, email, seqdir, refFn, pid, qcov, ungap, outfn, cpus, delete)

@@ -1,5 +1,3 @@
-# Joseph S. Wirth
-# September 2023
 from __future__ import annotations
 from Bio import SeqIO
 import getopt, os, sys
@@ -15,15 +13,18 @@ class Parameters():
     __DEFAULT_CLEANUP = True
     __DEFAULT_HELP = False
     __DEFAULT_THREADS = 1
-    __ESPW_FNA = "espW_alleles.fna"
-    
-    def __init__(self, fna:str, read1:str, read2:str, threads:int, cleanup:bool, helpRequested:bool) -> Parameters:
+        
+    def __init__(self, fna:str, read1:str, read2:str, referenceFna:str, blastPid:float, blastQcov:float, blastUngapped:bool, threads:int, cleanup:bool, helpRequested:bool) -> Parameters:
         """constructor for the Parameters class
 
         Args:
             fna (str): a nucleotide fasta filename and path
             read1 (str): a forward reads filename and path
             read2 (str): a reverse reads filename and path
+            referenceFna (str): the filename of a reference fasta
+            blastPid (float): percent identity cutoff for blast
+            blastQcov (float): qcov_hsp cutoff for blast
+            blastUngapped (bool): should blast be ran with ungapped flag
             threads (int): the number of threads to use for parallel processes
             cleanup (bool): indicates whether intermediate files should be removed
             helpRequested (bool): indicates if help was requested
@@ -38,15 +39,18 @@ class Parameters():
         self.cleanup:bool = cleanup
         self.helpRequested:bool = helpRequested
         
-        # determine the `data` directory
-        dataDir = os.path.join(os.path.dirname(__file__), "..", "data")
-        
         # import values from the params file
         self._aribaDb:str = os.path.join(os.curdir, Parameters._ARIBA_DB)
         self._aribaResultsDir:str = os.path.join(os.curdir, Parameters._ARIBA_DIR)
         self._blastResultsDir:str = os.path.join(os.curdir, Parameters._BLAST_DIR)
         self._blastDbDir:str = os.path.join(os.curdir, Parameters._BLAST_DB)
-        self._espwFna:str = os.path.join(dataDir, Parameters.__ESPW_FNA)
+        self._referenceFna:str = referenceFna
+        
+        # import blast parameters
+        self._blastPid:float = blastPid
+        self._blastQcov:float = blastQcov
+        self._blastUngapped:bool = blastUngapped
+        
         
         # initialize a few other variables
         self._blastDb:str = None
